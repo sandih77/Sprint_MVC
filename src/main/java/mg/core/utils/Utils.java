@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import mg.core.annotation.UrlMapping;
+import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 
@@ -39,21 +40,33 @@ public class Utils {
 
                 try {
                     Class<?> clazz = Class.forName(className);
+
                     if (clazz.isAnnotationPresent(classAnnotation)) {
                         classController.add(clazz);
                     }
                 } catch (ClassNotFoundException e) {
-
                 }
             }
         }
+
         return classController;
     }
 
-    public static void findUrlMethodMapping(String packageName,
+    public static void findUrlMethodMapping(
+            String packageName,
             Class<? extends Annotation> classAnnotation,
             Class<? extends Annotation> methodAnnotation,
             Map<UrlMethod, UrlMethodMapping> urlMethodMappings)
+            throws URISyntaxException, ClassNotFoundException {
+        findUrlMethodMapping(packageName, classAnnotation, methodAnnotation, urlMethodMappings, null);
+    }
+
+    public static void findUrlMethodMapping(
+            String packageName,
+            Class<? extends Annotation> classAnnotation,
+            Class<? extends Annotation> methodAnnotation,
+            Map<UrlMethod, UrlMethodMapping> urlMethodMappings,
+            Map<UrlMethod, DuplicateUrlMappingException> mappingErrors)
             throws URISyntaxException, ClassNotFoundException {
 
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
@@ -73,17 +86,41 @@ public class Utils {
                 continue;
 
             String className = packageName + "." + file.getName().replace(".class", "");
-
             Class<?> clazz = Class.forName(className);
 
             if (clazz.isAnnotationPresent(classAnnotation)) {
+
                 for (Method m : clazz.getDeclaredMethods()) {
+
                     if (m.isAnnotationPresent(methodAnnotation)) {
+
                         UrlMapping urlMapping = m.getAnnotation(UrlMapping.class);
+
                         String url = urlMapping.path();
                         String httpMethod = urlMapping.method().toUpperCase();
+
                         UrlMethod key = new UrlMethod(url, httpMethod);
                         UrlMethodMapping value = new UrlMethodMapping(clazz, m);
+
+                        if (urlMethodMappings.containsKey(key)) {
+                            UrlMethodMapping existing = urlMethodMappings.get(key);
+
+                            DuplicateUrlMappingException exception = new DuplicateUrlMappingException(
+                                    "Duplicate URL mapping detected: "
+                                            + url + " [" + httpMethod + "]\n"
+                                            + "First: " + existing.getClazz().getName() + "#"
+                                            + existing.getMethod().getName() + "\n"
+                                            + "Second: " + clazz.getName() + "#"
+                                            + m.getName());
+
+                            if (mappingErrors != null) {
+                                mappingErrors.put(key, exception);
+                                continue;
+                            }
+
+                            throw exception;
+                        }
+
                         urlMethodMappings.put(key, value);
                     }
                 }
