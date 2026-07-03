@@ -12,6 +12,7 @@ import jakarta.servlet.annotation.WebListener;
 import mg.core.utils.Utils;
 import mg.core.annotation.Controller;
 import mg.core.annotation.UrlMapping;
+import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 
@@ -26,10 +27,12 @@ public class AppInitializer implements ServletContextListener {
         try {
             List<Class<?>> controllers = Utils.getClassController(basePackage, Controller.class);
             Map<UrlMethod, UrlMethodMapping> mappings = new HashMap<>();
-            Utils.findUrlMethodMapping(basePackage, Controller.class, UrlMapping.class, mappings);
+            Map<UrlMethod, DuplicateUrlMappingException> mappingErrors = new HashMap<>();
+            Utils.findUrlMethodMapping(basePackage, Controller.class, UrlMapping.class, mappings, mappingErrors);
 
             context.setAttribute("controllers", controllers);
             context.setAttribute("mappings", mappings);
+            context.setAttribute("mappingErrors", mappingErrors);
         } catch (URISyntaxException | ClassNotFoundException e) {
 
         }

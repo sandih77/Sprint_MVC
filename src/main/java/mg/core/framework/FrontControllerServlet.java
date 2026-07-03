@@ -2,6 +2,7 @@ package mg.core.framework;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 
@@ -19,6 +21,7 @@ public class FrontControllerServlet extends HttpServlet {
 
     private List<Class<?>> listController;
     private Map<UrlMethod, UrlMethodMapping> listUrlMethodMappings = new HashMap<>();
+    private Map<UrlMethod, DuplicateUrlMappingException> mappingErrors = new HashMap<>();
 
     @SuppressWarnings("unchecked")
     @Override
@@ -26,6 +29,19 @@ public class FrontControllerServlet extends HttpServlet {
         super.init(config);
         listController = (List<Class<?>>) getServletContext().getAttribute("controllers");
         listUrlMethodMappings = (Map<UrlMethod, UrlMethodMapping>) getServletContext().getAttribute("mappings");
+        mappingErrors = (Map<UrlMethod, DuplicateUrlMappingException>) getServletContext().getAttribute("mappingErrors");
+
+        if (listController == null) {
+            listController = new ArrayList<>();
+        }
+
+        if (listUrlMethodMappings == null) {
+            listUrlMethodMappings = new HashMap<>();
+        }
+
+        if (mappingErrors == null) {
+            mappingErrors = new HashMap<>();
+        }
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
@@ -70,6 +86,16 @@ public class FrontControllerServlet extends HttpServlet {
             out.println();
 
             UrlMethod requestKey = new UrlMethod(relativePath, httpMethod);
+
+            DuplicateUrlMappingException mappingError = mappingErrors.get(requestKey);
+            if (mappingError != null) {
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+                out.println("========== EXCEPTION ==========");
+                out.println(mappingError.getClass().getName());
+                out.println(mappingError.getMessage());
+                return;
+            }
+
             UrlMethodMapping mapping = listUrlMethodMappings.get(requestKey);
 
             if (mapping == null) {
