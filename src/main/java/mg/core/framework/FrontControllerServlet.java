@@ -1,7 +1,6 @@
 package mg.core.framework;
 
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -16,20 +15,26 @@ import jakarta.servlet.http.HttpServletResponse;
 import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
+import mg.core.model.ModelAndView;
 
 public class FrontControllerServlet extends HttpServlet {
 
     private List<Class<?>> listController;
-    private Map<UrlMethod, UrlMethodMapping> listUrlMethodMappings = new HashMap<>();
-    private Map<UrlMethod, DuplicateUrlMappingException> mappingErrors = new HashMap<>();
+    private Map<UrlMethod, UrlMethodMapping> listUrlMethodMappings;
+    private Map<UrlMethod, DuplicateUrlMappingException> mappingErrors;
+
+    private String prefix;
+    private String suffix;
 
     @SuppressWarnings("unchecked")
     @Override
     public void init(ServletConfig config) throws ServletException {
         super.init(config);
+
         listController = (List<Class<?>>) getServletContext().getAttribute("controllers");
         listUrlMethodMappings = (Map<UrlMethod, UrlMethodMapping>) getServletContext().getAttribute("mappings");
-        mappingErrors = (Map<UrlMethod, DuplicateUrlMappingException>) getServletContext().getAttribute("mappingErrors");
+        mappingErrors = (Map<UrlMethod, DuplicateUrlMappingException>) getServletContext()
+                .getAttribute("mappingErrors");
 
         if (listController == null) {
             listController = new ArrayList<>();
@@ -42,93 +47,79 @@ public class FrontControllerServlet extends HttpServlet {
         if (mappingErrors == null) {
             mappingErrors = new HashMap<>();
         }
+
+        prefix = getInitParameter("prefix");
+        suffix = getInitParameter("suffix");
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-
-        response.setContentType("text/plain;charset=UTF-8");
 
         String uri = request.getRequestURI();
         String contextPath = request.getContextPath();
         String relativePath = uri.substring(contextPath.length());
         String httpMethod = request.getMethod().toUpperCase();
 
-        try (PrintWriter out = response.getWriter()) {
+        UrlMethod requestKey = new UrlMethod(relativePath, httpMethod);
 
-            out.println("======================================");
-            out.println("          FRONT CONTROLLER");
-            out.println("======================================");
-            out.println();
+        DuplicateUrlMappingException duplicate = mappingErrors.get(requestKey);
+        if (duplicate != null) {
+            throw new ServletException(duplicate);
+        }
 
-            out.println("URI          : " + uri);
-            out.println("Relative URI : " + relativePath);
-            out.println("HTTP Method  : " + httpMethod);
-            out.println();
+        UrlMethodMapping mapping = listUrlMethodMappings.get(requestKey);
 
-            out.println("========== CONTROLLERS ==========");
+        if (mapping == null) {
+            response.sendError(
+                    HttpServletResponse.SC_NOT_FOUND,
+                    "Aucun mapping trouvé pour : " + relativePath + " [" + httpMethod + "]");
+            return;
+        }
 
-            for (Class<?> controller : listController) {
-                out.println(controller.getName());
-            }
+        try {
+            Object controller = mapping.getClazz()
+                    .getDeclaredConstructor()
+                    .newInstance();
 
-            out.println();
-            out.println("========== URL MAPPINGS DISPONIBLE ==========");
+            Object result = mapping.getMethod().invoke(controller);
 
-            for (Map.Entry<UrlMethod, UrlMethodMapping> entry : listUrlMethodMappings.entrySet()) {
-
-                UrlMethod key = entry.getKey();
-                out.println("--------------------------------------");
-                out.println("URL        : " + key.getUrl());
-                out.println("HTTP       : " + key.getHttpMethod());
-            }
-
-            out.println();
-
-            UrlMethod requestKey = new UrlMethod(relativePath, httpMethod);
-
-            DuplicateUrlMappingException mappingError = mappingErrors.get(requestKey);
-            if (mappingError != null) {
-                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-                out.println("========== EXCEPTION ==========");
-                out.println(mappingError.getClass().getName());
-                out.println(mappingError.getMessage());
+            if (result == null) {
                 return;
             }
 
-            UrlMethodMapping mapping = listUrlMethodMappings.get(requestKey);
-
-            if (mapping == null) {
-                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
-                out.println("404 - Aucun mapping correspondant.");
+            if (result instanceof ModelAndView) {
+                ModelAndView mv = (ModelAndView) result;
+                if (mv.getModel() != null) {
+                    for (Map.Entry<String, Object> entry : mv.getModel().entrySet()) {
+                        request.setAttribute(entry.getKey(), entry.getValue());
+                    }
+                }
+                String destination = prefix + mv.getView() + suffix;
+                request.getRequestDispatcher(destination).forward(request, response);
                 return;
-            } else {
-                out.println("========== ROUTE TROUVÉE ==========");
-                out.println("URL        : " + requestKey.getUrl());
-                out.println("HTTP       : " + requestKey.getHttpMethod());
-                out.println("Classe     : " + mapping.getClazz().getName());
-                out.println("Méthode    : " + mapping.getMethod().getName());
             }
 
-            try {
-                Object controller = mapping.getClazz().getDeclaredConstructor().newInstance();
-                Object result = mapping.getMethod().invoke(controller);
-                out.println();
-                out.println("========== RESULT ==========");
-                out.println(result);
-            } catch (Exception e) {
-            }
+            response.setContentType("text/plain;charset=UTF-8");
+            response.getWriter().print(result);
+
+        } catch (Exception e) {
+            throw new ServletException(
+                    "Erreur lors de l'exécution de la méthode : "
+                            + mapping.getMethod().getName(),
+                    e);
         }
     }
 
     @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response)
+    protected void doGet(HttpServletRequest request,
+            HttpServletResponse response)
             throws ServletException, IOException {
         processRequest(request, response);
     }
 
     @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response)
+    protected void doPost(HttpServletRequest request,
+            HttpServletResponse response)
             throws ServletException, IOException {
         processRequest(request, response);
     }
