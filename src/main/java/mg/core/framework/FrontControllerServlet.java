@@ -14,10 +14,12 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import mg.core.annotation.JsonResponse;
 import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 import mg.core.model.ModelAndView;
+import mg.core.utils.JsonUtil;
 
 public class FrontControllerServlet extends HttpServlet {
 
@@ -83,16 +85,13 @@ public class FrontControllerServlet extends HttpServlet {
                     .getDeclaredConstructor()
                     .newInstance();
 
-            // 1. Détecter les paramètres attendus par la méthode
             Method targetMethod = mapping.getMethod();
             Parameter[] parameters = targetMethod.getParameters();
             Object[] args = new Object[parameters.length];
 
-            // 2. Récupérer le contexte Spring déposé par ContextLoaderListener
             Object springContext = getServletContext().getAttribute(
                     "org.springframework.web.context.WebApplicationContext.ROOT");
 
-            // 3. Injecter les arguments selon leur type
             for (int i = 0; i < parameters.length; i++) {
                 Class<?> paramType = parameters[i].getType();
 
@@ -108,10 +107,28 @@ public class FrontControllerServlet extends HttpServlet {
                 }
             }
 
-            // 4. Invoquer avec les arguments
             Object result = targetMethod.invoke(controller, args);
 
             if (result == null) {
+                return;
+            }
+
+            if (targetMethod.isAnnotationPresent(JsonResponse.class)) {
+                response.setContentType("application/json;charset=UTF-8");
+
+                JsonResponse jsonAnnotation = targetMethod.getAnnotation(JsonResponse.class);
+                boolean shouldFormat = jsonAnnotation.format();
+
+                Object targetData = (result instanceof ModelAndView)
+                        ? ((ModelAndView) result).getModel()
+                        : result;
+
+                if (shouldFormat) {
+                    String jsonOutput = JsonUtil.formatToJson(targetData);
+                    response.getWriter().print(jsonOutput);
+                } else {
+                    response.getWriter().print(targetData);
+                }
                 return;
             }
 
@@ -139,15 +156,13 @@ public class FrontControllerServlet extends HttpServlet {
     }
 
     @Override
-    protected void doGet(HttpServletRequest request,
-            HttpServletResponse response)
+    protected void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         processRequest(request, response);
     }
 
     @Override
-    protected void doPost(HttpServletRequest request,
-            HttpServletResponse response)
+    protected void doPost(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
         processRequest(request, response);
     }
