@@ -1,6 +1,7 @@
 package mg.core.framework;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 import mg.core.model.ModelAndView;
 import mg.core.utils.JsonUtil;
+import mg.core.utils.Utils;
 
 public class FrontControllerServlet extends HttpServlet {
 
@@ -54,6 +56,11 @@ public class FrontControllerServlet extends HttpServlet {
 
         prefix = getInitParameter("prefix");
         suffix = getInitParameter("suffix");
+
+        if (prefix == null)
+            prefix = "";
+        if (suffix == null)
+            suffix = "";
     }
 
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
@@ -103,15 +110,13 @@ public class FrontControllerServlet extends HttpServlet {
                 } else if (HttpServletResponse.class.isAssignableFrom(paramType)) {
                     args[i] = response;
                 } else {
-                    args[i] = null;
+                    String paramName = parameters[i].getName();
+                    String rawValue = request.getParameter(paramName);
+                    args[i] = Utils.convertParam(rawValue, paramType);
                 }
             }
 
             Object result = targetMethod.invoke(controller, args);
-
-            if (result == null) {
-                return;
-            }
 
             if (targetMethod.isAnnotationPresent(JsonResponse.class)) {
                 response.setContentType("application/json;charset=UTF-8");
@@ -119,9 +124,7 @@ public class FrontControllerServlet extends HttpServlet {
                 JsonResponse jsonAnnotation = targetMethod.getAnnotation(JsonResponse.class);
                 boolean shouldFormat = jsonAnnotation.format();
 
-                Object targetData = (result instanceof ModelAndView)
-                        ? ((ModelAndView) result).getModel()
-                        : result;
+                Object targetData = result;
 
                 if (shouldFormat) {
                     String jsonOutput = JsonUtil.formatToJson(targetData);
@@ -134,18 +137,24 @@ public class FrontControllerServlet extends HttpServlet {
 
             if (result instanceof ModelAndView) {
                 ModelAndView mv = (ModelAndView) result;
-                if (mv.getModel() != null) {
-                    for (Map.Entry<String, Object> entry : mv.getModel().entrySet()) {
-                        request.setAttribute(entry.getKey(), entry.getValue());
+                String viewName = mv.getView();
+                String destination = prefix + viewName + suffix;
+
+                if (viewName != null && !viewName.trim().isEmpty()
+                        && getServletContext().getResource(destination) != null) {
+                    if (mv.getModel() != null) {
+                        for (Map.Entry<String, Object> entry : mv.getModel().entrySet()) {
+                            request.setAttribute(entry.getKey(), entry.getValue());
+                        }
                     }
+                    request.getRequestDispatcher(destination).forward(request, response);
+                    return;
                 }
-                String destination = prefix + mv.getView() + suffix;
-                request.getRequestDispatcher(destination).forward(request, response);
-                return;
             }
 
-            response.setContentType("text/plain;charset=UTF-8");
-            response.getWriter().print(result);
+            response.setContentType("text/html;charset=UTF-8");
+            PrintWriter out = response.getWriter();
+            out.println("<p><code>" + result + "</code></p>");
 
         } catch (Exception e) {
             throw new ServletException(

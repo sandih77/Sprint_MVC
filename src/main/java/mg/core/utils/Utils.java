@@ -5,6 +5,8 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -126,5 +128,39 @@ public class Utils {
                 }
             }
         }
+    }
+
+    public static Object convertParam(String rawValue, Class<?> targetType) {
+        if (rawValue == null || rawValue.trim().isEmpty()) {
+            if (targetType.isPrimitive()) {
+                if (targetType == boolean.class)
+                    return false;
+                if (targetType == int.class)
+                    return 0;
+                if (targetType == double.class)
+                    return 0.0;
+                if (targetType == float.class)
+                    return 0.0;
+                if (targetType == long.class)
+                    return 0L;
+            }
+            return null;
+        }
+
+        if (targetType == String.class)
+            return rawValue;
+        if (targetType == Integer.class || targetType == int.class)
+            return Integer.parseInt(rawValue);
+        if (targetType == Double.class || targetType == double.class)
+            return Double.parseDouble(rawValue);
+        if (targetType == float.class || targetType == Float.class)
+            return Float.parseFloat(rawValue);
+        if (targetType == boolean.class || targetType == Boolean.class)
+            return Boolean.parseBoolean(rawValue);
+        if (targetType == LocalDate.class)
+            return LocalDate.parse(rawValue);
+        if (targetType == LocalDateTime.class)
+            return LocalDateTime.parse(rawValue);
+        return rawValue;
     }
 }
