@@ -101,6 +101,7 @@ public class FrontControllerServlet extends HttpServlet {
 
             for (int i = 0; i < parameters.length; i++) {
                 Class<?> paramType = parameters[i].getType();
+                Parameter param = parameters[i];
 
                 if (paramType.getName().equals("org.springframework.context.ApplicationContext")
                         || (springContext != null && paramType.isAssignableFrom(springContext.getClass()))) {
@@ -109,10 +110,20 @@ public class FrontControllerServlet extends HttpServlet {
                     args[i] = request;
                 } else if (HttpServletResponse.class.isAssignableFrom(paramType)) {
                     args[i] = response;
-                } else {
-                    String paramName = parameters[i].getName();
-                    String rawValue = request.getParameter(paramName);
+                } else if (paramType.isArray()) {
+                    Class<?> componentType = paramType.getComponentType();
+                    if (Utils.isSimpleType(componentType)) {
+                        String[] rawValues = request.getParameterValues(param.getName());
+                        args[i] = Utils.convertArray(rawValues, componentType);
+                    } else {
+                        args[i] = Utils.bindObjectArray(request, componentType, param.getName());
+                    }
+                } else if (Utils.isSimpleType(paramType)) {
+                    String rawValue = request.getParameter(param.getName());
                     args[i] = Utils.convertParam(rawValue, paramType);
+                } else {
+                    Object obj = Utils.bindObject(request, paramType, "");
+                    args[i] = obj;
                 }
             }
 
