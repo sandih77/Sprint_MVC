@@ -11,18 +11,22 @@ import java.util.Map;
 
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.annotation.MultipartConfig;
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.Part;
 
 import mg.core.annotation.JsonResponse;
 import mg.core.exception.DuplicateUrlMappingException;
+import mg.core.mapping.MapFile;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 import mg.core.model.ModelAndView;
 import mg.core.utils.JsonUtil;
 import mg.core.utils.Utils;
 
+@MultipartConfig
 public class FrontControllerServlet extends HttpServlet {
 
     private List<Class<?>> listController;
@@ -99,9 +103,12 @@ public class FrontControllerServlet extends HttpServlet {
             Object springContext = getServletContext().getAttribute(
                     "org.springframework.web.context.WebApplicationContext.ROOT");
 
+            boolean isMultipart = Utils.isMultipart(request);
+
             for (int i = 0; i < parameters.length; i++) {
                 Class<?> paramType = parameters[i].getType();
                 Parameter param = parameters[i];
+                String paramName = param.getName();
 
                 if (paramType.getName().equals("org.springframework.context.ApplicationContext")
                         || (springContext != null && paramType.isAssignableFrom(springContext.getClass()))) {
@@ -110,16 +117,34 @@ public class FrontControllerServlet extends HttpServlet {
                     args[i] = request;
                 } else if (HttpServletResponse.class.isAssignableFrom(paramType)) {
                     args[i] = response;
+                } else if (paramType.equals(MapFile.class)) {
+                    if (isMultipart) {
+                        Part part = null;
+                        try {
+                            part = request.getPart(paramName);
+                        } catch (Exception ignored) {
+                        }
+                        args[i] = Utils.extractMapFile(part);
+                    } else {
+                        args[i] = null;
+                    }
+                } else if (paramType.isArray() && paramType.getComponentType().equals(MapFile.class)) {
+                    if (isMultipart) {
+                        List<MapFile> files = Utils.extractMapFiles(request, paramName);
+                        args[i] = files.toArray(new MapFile[0]);
+                    } else {
+                        args[i] = new MapFile[0];
+                    }
                 } else if (paramType.isArray()) {
                     Class<?> componentType = paramType.getComponentType();
                     if (Utils.isSimpleType(componentType)) {
-                        String[] rawValues = request.getParameterValues(param.getName());
+                        String[] rawValues = request.getParameterValues(paramName);
                         args[i] = Utils.convertArray(rawValues, componentType);
                     } else {
-                        args[i] = Utils.bindObjectArray(request, componentType, param.getName());
+                        args[i] = Utils.bindObjectArray(request, componentType, paramName);
                     }
                 } else if (Utils.isSimpleType(paramType)) {
-                    String rawValue = request.getParameter(param.getName());
+                    String rawValue = request.getParameter(paramName);
                     args[i] = Utils.convertParam(rawValue, paramType);
                 } else {
                     Object obj = Utils.bindObject(request, paramType, "");

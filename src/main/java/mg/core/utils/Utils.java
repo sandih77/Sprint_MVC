@@ -1,6 +1,8 @@
 package mg.core.utils;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -11,6 +13,7 @@ import java.net.URL;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
@@ -18,8 +21,10 @@ import java.util.Set;
 import java.util.TreeSet;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.Part;
 import mg.core.annotation.UrlMapping;
 import mg.core.exception.DuplicateUrlMappingException;
+import mg.core.mapping.MapFile;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 
@@ -41,19 +46,22 @@ public class Utils {
         File directory = new File(resource.toURI());
 
         if (directory.exists()) {
-            for (File file : directory.listFiles()) {
-                if (!file.getName().endsWith(".class"))
-                    continue;
+            File[] files = directory.listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (!file.getName().endsWith(".class"))
+                        continue;
 
-                String className = packageName + "." + file.getName().replace(".class", "");
+                    String className = packageName + "." + file.getName().replace(".class", "");
 
-                try {
-                    Class<?> clazz = Class.forName(className);
+                    try {
+                        Class<?> clazz = Class.forName(className);
 
-                    if (clazz.isAnnotationPresent(classAnnotation)) {
-                        classController.add(clazz);
+                        if (clazz.isAnnotationPresent(classAnnotation)) {
+                            classController.add(clazz);
+                        }
+                    } catch (ClassNotFoundException ignored) {
                     }
-                } catch (ClassNotFoundException e) {
                 }
             }
         }
@@ -90,7 +98,11 @@ public class Utils {
         if (!directory.exists())
             return;
 
-        for (File file : directory.listFiles()) {
+        File[] files = directory.listFiles();
+        if (files == null)
+            return;
+
+        for (File file : files) {
             if (!file.getName().endsWith(".class"))
                 continue;
 
@@ -147,6 +159,89 @@ public class Utils {
                 || type == Boolean.class
                 || type == LocalDate.class
                 || type == LocalDateTime.class;
+    }
+
+    public static boolean isMultipart(HttpServletRequest request) {
+        String contentType = request.getContentType();
+        return contentType != null && contentType.toLowerCase().startsWith("multipart/form-data");
+    }
+
+    public static MapFile extractMapFile(Part part) {
+        if (part == null || part.getSubmittedFileName() == null || part.getSubmittedFileName().trim().isEmpty()) {
+            return null;
+        }
+
+        try {
+            String fullFileName = part.getSubmittedFileName();
+            if (fullFileName.contains("\\")) {
+                fullFileName = fullFileName.substring(fullFileName.lastIndexOf('\\') + 1);
+            }
+            if (fullFileName.contains("/")) {
+                fullFileName = fullFileName.substring(fullFileName.lastIndexOf('/') + 1);
+            }
+
+            String extension = "";
+            int dotIndex = fullFileName.lastIndexOf('.');
+            if (dotIndex >= 0 && dotIndex < fullFileName.length() - 1) {
+                extension = fullFileName.substring(dotIndex + 1);
+            }
+
+            byte[] primitiveBytes;
+            try (InputStream is = part.getInputStream();
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int read;
+                while ((read = is.read(buffer)) != -1) {
+                    baos.write(buffer, 0, read);
+                }
+                primitiveBytes = baos.toByteArray();
+            }
+
+            Byte[] objectBytes = new Byte[primitiveBytes.length];
+            for (int i = 0; i < primitiveBytes.length; i++) {
+                objectBytes[i] = primitiveBytes[i];
+            }
+
+            MapFile mapFile = new MapFile();
+            mapFile.setFileName(fullFileName);
+            mapFile.setExtension(extension);
+            mapFile.setBytes(objectBytes);
+
+            return mapFile;
+        } catch (Exception e) {
+            throw new RuntimeException("Erreur lors de la lecture du fichier uploadé : " + part.getName(), e);
+        }
+    }
+
+    public static List<MapFile> extractMapFiles(HttpServletRequest request, String partName) {
+        List<MapFile> files = new ArrayList<>();
+        if (!isMultipart(request)) {
+            return files;
+        }
+        try {
+            Collection<Part> parts = request.getParts();
+            for (Part part : parts) {
+                if (part.getName().equals(partName)) {
+                    MapFile mf = extractMapFile(part);
+                    if (mf != null) {
+                        files.add(mf);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Erreur lors de la récupération des fichiers pour le champ : " + partName, e);
+        }
+        return files;
+    }
+
+    private static boolean isMapFileList(Field field) {
+        if (field.getGenericType() instanceof ParameterizedType) {
+            ParameterizedType pt = (ParameterizedType) field.getGenericType();
+            if (pt.getActualTypeArguments().length > 0) {
+                return pt.getActualTypeArguments()[0].equals(MapFile.class);
+            }
+        }
+        return false;
     }
 
     public static Object convertParam(String rawValue, Class<?> targetType) {
@@ -213,6 +308,7 @@ public class Utils {
         try {
             Object instance = clazz.getDeclaredConstructor().newInstance();
             Field[] fields = clazz.getDeclaredFields();
+            boolean multipart = isMultipart(request);
 
             for (Field f : fields) {
                 String fieldName = f.getName();
@@ -221,12 +317,30 @@ public class Utils {
                 Class<?> fType = f.getType();
                 Object valueToSet = null;
 
-                if (fType.isArray()) {
-                    // Champ de type tableau (ex: String[], Integer[])
+                if (fType.equals(MapFile.class)) {
+                    if (multipart) {
+                        Part part = null;
+                        try {
+                            part = request.getPart(fullParamName);
+                        } catch (Exception ignored) {
+                        }
+                        if (part != null) {
+                            valueToSet = extractMapFile(part);
+                        }
+                    }
+                } else if (fType.isArray() && fType.getComponentType().equals(MapFile.class)) {
+                    if (multipart) {
+                        List<MapFile> files = extractMapFiles(request, fullParamName);
+                        valueToSet = files.toArray(new MapFile[0]);
+                    }
+                } else if (List.class.isAssignableFrom(fType) && isMapFileList(f)) {
+                    if (multipart) {
+                        valueToSet = extractMapFiles(request, fullParamName);
+                    }
+                } else if (fType.isArray()) {
                     String[] rawValues = request.getParameterValues(fullParamName);
                     valueToSet = convertArray(rawValues, fType.getComponentType());
                 } else if (List.class.isAssignableFrom(fType)) {
-                    // Champ de type List (ex: List<String>)
                     String[] rawValues = request.getParameterValues(fullParamName);
                     Class<?> genericType = String.class;
                     if (f.getGenericType() instanceof ParameterizedType) {
@@ -235,13 +349,11 @@ public class Utils {
                     }
                     valueToSet = convertList(rawValues, genericType);
                 } else if (isSimpleType(fType)) {
-                    // Champ primitif / simple
                     String rawValue = request.getParameter(fullParamName);
                     if (rawValue != null) {
                         valueToSet = convertParam(rawValue, fType);
                     }
                 } else {
-                    // Objet imbriqué (ex: Address)
                     valueToSet = bindObject(request, fType, fullParamName);
                 }
 
@@ -265,21 +377,20 @@ public class Utils {
     public static Object bindObjectArray(HttpServletRequest request, Class<?> componentType, String paramName) {
         try {
             Set<Integer> indexes = new TreeSet<>();
-            Enumeration<String> parameterNames = request.getParameterNames();
-
             String prefixPatternWithBracket = paramName + "[";
 
+            Enumeration<String> parameterNames = request.getParameterNames();
             while (parameterNames.hasMoreElements()) {
                 String name = parameterNames.nextElement();
-                if (name.startsWith(prefixPatternWithBracket)) {
-                    int closeBracket = name.indexOf(']');
-                    if (closeBracket > prefixPatternWithBracket.length() - 1) {
-                        String indexStr = name.substring(prefixPatternWithBracket.length(), closeBracket);
-                        try {
-                            indexes.add(Integer.parseInt(indexStr));
-                        } catch (NumberFormatException ignored) {
-                        }
+                extractIndex(name, prefixPatternWithBracket, indexes);
+            }
+
+            if (isMultipart(request)) {
+                try {
+                    for (Part part : request.getParts()) {
+                        extractIndex(part.getName(), prefixPatternWithBracket, indexes);
                     }
+                } catch (Exception ignored) {
                 }
             }
 
@@ -294,6 +405,19 @@ public class Utils {
             return array;
         } catch (Exception e) {
             throw new RuntimeException("Erreur lors du binding du tableau " + componentType.getSimpleName() + "[]", e);
+        }
+    }
+
+    private static void extractIndex(String name, String prefixPatternWithBracket, Set<Integer> indexes) {
+        if (name != null && name.startsWith(prefixPatternWithBracket)) {
+            int closeBracket = name.indexOf(']');
+            if (closeBracket > prefixPatternWithBracket.length() - 1) {
+                String indexStr = name.substring(prefixPatternWithBracket.length(), closeBracket);
+                try {
+                    indexes.add(Integer.parseInt(indexStr));
+                } catch (NumberFormatException ignored) {
+                }
+            }
         }
     }
 }
