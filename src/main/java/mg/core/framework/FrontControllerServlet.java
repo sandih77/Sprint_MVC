@@ -23,7 +23,9 @@ import mg.core.mapping.MapFile;
 import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 import mg.core.model.ModelAndView;
+import mg.core.model.SSession;
 import mg.core.utils.JsonUtil;
+import mg.core.utils.SSessionUtils;
 import mg.core.utils.Utils;
 
 @MultipartConfig
@@ -105,6 +107,8 @@ public class FrontControllerServlet extends HttpServlet {
 
             boolean isMultipart = Utils.isMultipart(request);
 
+            SSession sessionTracker = null;
+
             for (int i = 0; i < parameters.length; i++) {
                 Class<?> paramType = parameters[i].getType();
                 Parameter param = parameters[i];
@@ -117,6 +121,11 @@ public class FrontControllerServlet extends HttpServlet {
                     args[i] = request;
                 } else if (HttpServletResponse.class.isAssignableFrom(paramType)) {
                     args[i] = response;
+                } else if (paramType.equals(SSession.class)) {
+                    if (sessionTracker == null) {
+                        sessionTracker = SSessionUtils.getSSession(getServletContext(), request.getSession());
+                    }
+                    args[i] = sessionTracker;
                 } else if (paramType.equals(MapFile.class)) {
                     if (isMultipart) {
                         Part part = null;
@@ -153,6 +162,10 @@ public class FrontControllerServlet extends HttpServlet {
             }
 
             Object result = targetMethod.invoke(controller, args);
+
+            if (sessionTracker != null) {
+                SSessionUtils.updateSession(request.getSession(), sessionTracker);
+            }
 
             if (targetMethod.isAnnotationPresent(JsonResponse.class)) {
                 response.setContentType("application/json;charset=UTF-8");
@@ -193,10 +206,16 @@ public class FrontControllerServlet extends HttpServlet {
             out.println("<p><code>" + result + "</code></p>");
 
         } catch (Exception e) {
+            Throwable cause = e;
+            if (e instanceof java.lang.reflect.InvocationTargetException ite && ite.getCause() != null) {
+                cause = ite.getCause();
+            }
+            cause.printStackTrace(); // Affiche la vraie ligne dans les logs Tomcat (catalina.out)
             throw new ServletException(
                     "Erreur lors de l'exécution de la méthode : "
-                            + mapping.getMethod().getName(),
-                    e);
+                            + mapping.getMethod().getName()
+                            + (cause.getMessage() != null ? " -> " + cause.getMessage() : ""),
+                    cause);
         }
     }
 
