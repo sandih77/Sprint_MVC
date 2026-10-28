@@ -16,7 +16,7 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.Part;
-
+import mg.core.annotation.Authenticate;
 import mg.core.annotation.JsonResponse;
 import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.MapFile;
@@ -37,6 +37,7 @@ public class FrontControllerServlet extends HttpServlet {
 
     private String prefix;
     private String suffix;
+    private String authSession;
 
     @SuppressWarnings("unchecked")
     @Override
@@ -62,6 +63,7 @@ public class FrontControllerServlet extends HttpServlet {
 
         prefix = getInitParameter("prefix");
         suffix = getInitParameter("suffix");
+        authSession = getInitParameter("authSession");
 
         if (prefix == null)
             prefix = "";
@@ -108,6 +110,26 @@ public class FrontControllerServlet extends HttpServlet {
             boolean isMultipart = Utils.isMultipart(request);
 
             SSession sessionTracker = null;
+
+            if (targetMethod.isAnnotationPresent(Authenticate.class)) {
+                String sessionKey = (authSession != null && !authSession.isBlank()) ? authSession : "user";
+                var httpSession = request.getSession(false);
+
+                boolean isAuthenticated = false;
+                if (httpSession != null) {
+                    Object authUser = httpSession.getAttribute(sessionKey);
+                    if (authUser != null) {
+                        isAuthenticated = true;
+                    }
+                }
+
+                if (!isAuthenticated) {
+                    response.sendError(
+                            HttpServletResponse.SC_UNAUTHORIZED,
+                            "Accès refusé : vous devez être connecté pour accéder à cette ressource.");
+                    return;
+                }
+            }
 
             for (int i = 0; i < parameters.length; i++) {
                 Class<?> paramType = parameters[i].getType();
