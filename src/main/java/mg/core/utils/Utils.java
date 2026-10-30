@@ -3,6 +3,7 @@ package mg.core.utils;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.InputStream;
+import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -10,6 +11,9 @@ import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -17,6 +21,7 @@ import java.util.Collection;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -29,6 +34,25 @@ import mg.core.mapping.UrlMethod;
 import mg.core.mapping.UrlMethodMapping;
 
 public class Utils {
+
+    public static String getUploadDirectory() {
+        Properties properties = new Properties();
+        try (InputStream input = Thread.currentThread().getContextClassLoader()
+                .getResourceAsStream("config.properties")) {
+            if (input == null) {
+                throw new IllegalStateException("Le fichier config.properties est introuvable.");
+            }
+            properties.load(input);
+        } catch (IOException e) {
+            throw new IllegalStateException("Impossible de lire config.properties.", e);
+        }
+
+        String directory = properties.getProperty("upload.directory");
+        if (directory == null || directory.isBlank()) {
+            throw new IllegalStateException("La propriété upload.directory est obligatoire.");
+        }
+        return directory;
+    }
 
     public static List<Class<?>> getClassController(
             String packageName,
@@ -211,6 +235,42 @@ public class Utils {
         } catch (Exception e) {
             throw new RuntimeException("Erreur lors de la lecture du fichier uploadé : " + part.getName(), e);
         }
+    }
+
+    public static void save(MapFile mapFile, String directory) {
+        if (mapFile == null) {
+            throw new IllegalArgumentException("Le fichier à sauvegarder ne peut pas être null.");
+        }
+        if (directory == null || directory.isBlank()) {
+            throw new IllegalArgumentException("Le répertoire de sauvegarde ne peut pas être vide.");
+        }
+        if (mapFile.getFileName() == null || mapFile.getFileName().isBlank()) {
+            throw new IllegalArgumentException("Le nom du fichier ne peut pas être vide.");
+        }
+        if (mapFile.getBytes() == null) {
+            throw new IllegalArgumentException("Le contenu du fichier ne peut pas être null.");
+        }
+
+        Path targetDirectory = Paths.get(directory);
+        Path fileName = Paths.get(mapFile.getFileName()).getFileName();
+        if (fileName == null || !fileName.toString().equals(mapFile.getFileName())) {
+            throw new IllegalArgumentException("Le nom du fichier n'est pas valide.");
+        }
+
+        try {
+            Files.createDirectories(targetDirectory);
+            byte[] content = new byte[mapFile.getBytes().length];
+            for (int i = 0; i < mapFile.getBytes().length; i++) {
+                content[i] = mapFile.getBytes()[i];
+            }
+            Files.write(targetDirectory.resolve(fileName), content);
+        } catch (IOException e) {
+            throw new RuntimeException("Erreur lors de la sauvegarde du fichier : " + mapFile.getFileName(), e);
+        }
+    }
+
+    public static void save(MapFile mapFile) {
+        save(mapFile, getUploadDirectory());
     }
 
     public static List<MapFile> extractMapFiles(HttpServletRequest request, String partName) {

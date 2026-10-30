@@ -104,9 +104,14 @@ public class FrontControllerServlet extends HttpServlet {
         }
 
         try {
-            Object controller = mapping.getClazz()
-                    .getDeclaredConstructor()
-                    .newInstance();
+            Object controller = null;
+
+            if (this.getServletContext().getAttribute(mapping.getClazz().getName()) == null) {
+                controller = mapping.getClazz().getDeclaredConstructor().newInstance();
+                this.getServletContext().setAttribute(mapping.getClazz().getName(), controller);
+            } else {
+                controller = this.getServletContext().getAttribute(mapping.getClazz().getName());
+            }
 
             Method targetMethod = mapping.getMethod();
             Parameter[] parameters = targetMethod.getParameters();
