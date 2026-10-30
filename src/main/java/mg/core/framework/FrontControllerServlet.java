@@ -18,6 +18,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.Part;
 import mg.core.annotation.Authenticate;
 import mg.core.annotation.JsonResponse;
+import mg.core.annotation.Role;
 import mg.core.exception.DuplicateUrlMappingException;
 import mg.core.mapping.MapFile;
 import mg.core.mapping.UrlMethod;
@@ -38,6 +39,7 @@ public class FrontControllerServlet extends HttpServlet {
     private String prefix;
     private String suffix;
     private String authSession;
+    private String roleSession;
 
     @SuppressWarnings("unchecked")
     @Override
@@ -64,6 +66,12 @@ public class FrontControllerServlet extends HttpServlet {
         prefix = getInitParameter("prefix");
         suffix = getInitParameter("suffix");
         authSession = getInitParameter("authSession");
+        roleSession = getInitParameter("roleSession");
+
+        if (authSession == null || authSession.isBlank())
+            authSession = "user";
+        if (roleSession == null || roleSession.isBlank())
+            roleSession = "role";
 
         if (prefix == null)
             prefix = "";
@@ -111,23 +119,50 @@ public class FrontControllerServlet extends HttpServlet {
 
             SSession sessionTracker = null;
 
-            if (targetMethod.isAnnotationPresent(Authenticate.class)) {
-                String sessionKey = (authSession != null && !authSession.isBlank()) ? authSession : "user";
+            boolean hasRole = targetMethod.isAnnotationPresent(Role.class);
+            boolean isConnected = targetMethod.isAnnotationPresent(Authenticate.class);
+
+            if (hasRole && !isConnected) {
+                throw new ServletException(
+                        "Erreur de configuration : la méthode '%s' annotée avec @Role doit également être annotée avec @Authenticate."
+                                .formatted(targetMethod.getName()));
+            }
+
+            if (isConnected) {
                 var httpSession = request.getSession(false);
-
-                boolean isAuthenticated = false;
-                if (httpSession != null) {
-                    Object authUser = httpSession.getAttribute(sessionKey);
-                    if (authUser != null) {
-                        isAuthenticated = true;
-                    }
-                }
-
-                if (!isAuthenticated) {
+                Object authUser = (httpSession != null) ? httpSession.getAttribute(authSession) : null;
+                if (authUser == null) {
                     response.sendError(
                             HttpServletResponse.SC_UNAUTHORIZED,
                             "Accès refusé : vous devez être connecté pour accéder à cette ressource.");
                     return;
+                }
+
+                if (hasRole) {
+                    Role roleAnnotation = targetMethod.getAnnotation(Role.class);
+                    String[] requiredRoles = roleAnnotation.value();
+
+                    if (requiredRoles.length > 0) {
+                        Object userRoleObj = httpSession.getAttribute(roleSession);
+                        String userRole = (userRoleObj != null) ? userRoleObj.toString() : null;
+                        boolean hasPermission = false;
+
+                        if (userRole != null) {
+                            for (String r : requiredRoles) {
+                                if (r.equalsIgnoreCase(userRole)) {
+                                    hasPermission = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!hasPermission) {
+                            response.sendError(
+                                    HttpServletResponse.SC_FORBIDDEN,
+                                    "Accès interdit : rôle insuffisant pour exécuter cette action.");
+                            return;
+                        }
+                    }
                 }
             }
 
